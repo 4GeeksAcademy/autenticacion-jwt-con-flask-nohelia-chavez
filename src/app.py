@@ -1,47 +1,50 @@
-# src/app.py
 import os
-from flask_cors import CORS
-from flask import Flask, request, jsonify, url_for, send_from_directory
+from flask import Flask, jsonify, send_from_directory
 from flask_migrate import Migrate
-from flask_swagger import swagger
 from api.utils import APIException, generate_sitemap
 from api.models import db
 from api.routes import api
 from api.admin import setup_admin
 from api.commands import setup_commands
-from flask_jwt_extended import JWTManager   # <-- IMPORTANTE
+from flask_cors import CORS
+from flask_jwt_extended import JWTManager
 
 ENV = "development" if os.getenv("FLASK_DEBUG") == "1" else "production"
 static_file_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), '../dist/')
+
 app = Flask(__name__)
 app.url_map.strict_slashes = False
 
-# JWT
-app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY") or "change-me"
-jwt = JWTManager(app)  # <-- INICIALIZA JWT
-
-# CORS para todas las rutas del backend
-CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
-
+# JWT poner mi clave en .env)
+app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "change-me")
+jwt = JWTManager(app)
 
 # DB
 db_url = os.getenv("DATABASE_URL")
-if db_url is not None:
-    app.config['SQLALCHEMY_DATABASE_URI'] = db_url.replace("postgres://", "postgresql://")
+if db_url:
+    app.config['SQLALCHEMY_DATABASE_URI'] = db_url.replace("postgres://","postgresql://")
 else:
     app.config['SQLALCHEMY_DATABASE_URI'] = "sqlite:////tmp/test.db"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 MIGRATE = Migrate(app, db, compare_type=True)
 db.init_app(app)
 
+# admin y comandos
 setup_admin(app)
 setup_commands(app)
-app.register_blueprint(api, url_prefix='/api')
 
+# CORS para todo /api/
+CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+#blueprint API
+app.register_blueprint(api, url_prefix="/api")
+
+# errores JSON
 @app.errorhandler(APIException)
 def handle_invalid_usage(error):
     return jsonify(error.to_dict()), error.status_code
 
+# sitemap (solo dev)
 @app.route('/')
 def sitemap():
     if ENV == "development":

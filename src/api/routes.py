@@ -1,51 +1,67 @@
-# src/api/routes.py
 from flask import Blueprint, request, jsonify
-from flask_cors import CORS
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
-from sqlalchemy import select
 from api.models import db, User
+from flask_cors import CORS  #agrega los headers para que el front pueda llamar a la api
+from sqlalchemy import select
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 
-api = Blueprint('api', __name__)
-CORS(api)  # también a nivel blueprint (extra)
+api = Blueprint('api', __name__) #se crea el blueprint llamado api
+CORS(api) 
 
-@api.route('/hello', methods=['GET'])
+
+#GET /api/hello para verificar que el back corre responde con un json simple
+@api.get('/hello')
 def hello():
-    return jsonify({"message": "Hello from Flask API 👋"}), 200
+    return jsonify({"message": "Backend OK 👋"}), 200
 
-@api.route('/signup', methods=['POST'])
+#registro lee json del body  POST
+@api.post('/signup')
 def signup():
     data = request.get_json() or {}
-    email = (data.get("email") or "").strip().lower()
-    password = (data.get("password") or "").strip()
+    email = (data.get("email") or "").strip().lower() #normaliza el email: strip() quita espacios; lower() evita duplicados por mayuscula y minuscula
+    password = data.get("password") # se toma tal cual , en produccion se hashea
 
+
+#valida campos: sin email o password 400 bad request
     if not email or not password:
-        return jsonify({"success": False, "msg": "email y password son requeridos"}), 400
+        return jsonify({"msg": "email y password requeridos"}), 400
+    
+    #busca el email si esta en uso sie existe entra en conflicto 409
 
-    if db.session.execute(select(User).where(User.email == email)).scalar_one_or_none():
-        return jsonify({"success": False, "msg": "email ya registrado"}), 409
+    exists = db.session.execute(select(User).where(User.email == email)).scalar_one_or_none()
+    if exists:
+        return jsonify({"msg": "Ese email ya existe"}), 409
+    
+    #crea el user y commit responde 201 y a login
 
     user = User(email=email, password=password, is_active=True)
     db.session.add(user)
     db.session.commit()
-    return jsonify({"success": True, "msg": "usuario creado, inicia sesión"}), 201
+    return jsonify({"msg": "usuario creado, inicia sesión"}), 201
 
-@api.route('/login', methods=['POST'])
+#login  POST
+@api.post('/login')
 def login():
     data = request.get_json() or {}
     email = (data.get("email") or "").strip().lower()
-    password = (data.get("password") or "").strip()
+    password = data.get("password")
+
+#ambos campos obligatorios
+    if not email or not password:
+        return jsonify({"msg": "email y password requeridos"}), 400 #si no existe o la contraseña no coincide → 401 
 
     user = db.session.execute(select(User).where(User.email == email)).scalar_one_or_none()
     if not user or user.password != password:
-        return jsonify({"success": False, "msg": "email/contraseña inválidos"}), 401
+        # mismísimo 401 que ves en la red
+        return jsonify({"msg": "email/contraseña inválidos"}), 401
 
-    # identity debe ser string
-    access_token = create_access_token(identity=str(user.id))
-    return jsonify({"success": True, "token": access_token, "user": user.serialize()}), 200
+    # identity debe ser string o int; usamos str por seguridad
+    token = create_access_token(identity=str(user.id))
+    return jsonify({"token": token, "user": user.serialize()}), 200
 
-@api.route('/private', methods=['GET'])
+#ruta privada  GET
+@api.get('/private')
 @jwt_required()
 def private():
-    user_id = get_jwt_identity()  # es string
-    user = db.session.get(User, int(user_id))
-    return jsonify({"success": True, "user": user.serialize()}), 200
+    uid = get_jwt_identity()  # viene como string
+    user = db.session.get(User, int(uid))
+    return jsonify({"msg": "acceso permitido", "user": user.serialize()}), 200
